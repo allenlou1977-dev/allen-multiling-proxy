@@ -1,0 +1,23 @@
+{
+  "version": 2,
+  "builds": [
+    {
+      "src": "api/gpt-proxy.js",
+      "use": "@vercel/node"
+    },
+    {
+      "src": "api/voice-proxy.js",
+      "use": "@vercel/node"
+    }
+  ],
+  "routes": [
+    {
+      "src": "/api/gpt-proxy",
+      "dest": "/api/gpt-proxy.js"
+    },
+    {
+      "src": "/api/voice-proxy",
+      "dest": "/api/voice-proxy.js"
+    }
+  ]
+}
