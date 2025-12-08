@@ -1,88 +1,70 @@
-/************************************************************
- * Allen MultiLing ∞ AI — Whisper Proxy v12.0.1
- * File: /api/voice-proxy.js
+/**
+ * Allen MultiLing ∞ AI — Whisper Proxy v12.0.8
+ * Build: 2025-12-08
  *
  * 功能：
- *  - 接收 GAS 傳來的 audio bytes（LINE 錄音）
- *  - 呼叫 OpenAI /audio/transcriptions
- *  - 回傳純文字結果給 GAS
- *
- * 回傳格式（給 GAS 用）：
- *  {
- *    ok:   true/false,
- *    sid:  "user / group id",
- *    text: "辨識後文字",
- *    error: "錯誤代碼" 或 null
- *  }
- ************************************************************/
+ *  - 語音辨識（Whisper API）
+ *  - 回傳格式完全符合 GAS 主程式需求
+ */
 
-module.exports = async function handler(req, res) {
-  // 只允許 POST（GET 只用來確認連線時會看到錯誤訊息）
-  if (req.method !== "POST") {
-    return res.status(200).json({
-      ok: false,
-      error: "POST only"
-    });
-  }
+import express from "express";
+import cors from "cors";
+import multer from "multer";
 
+const upload = multer();
+const app = express();
+app.use(cors());
+
+const OPENAI_KEY = process.env.OPENAI_API_KEY;
+if (!OPENAI_KEY) {
+  console.error("❌ 未設定 OPENAI_API_KEY");
+}
+
+function error(msg) {
+  return { ok: false, error: msg };
+}
+
+// Whisper 模型
+const WHISPER_MODEL = "gpt-4o-mini-tts";   // 建議：速度快 / 準確度高
+
+app.post("/", upload.single("file"), async (req, res) => {
   try {
-    const apiKey = process.env.OPENAI_API_KEY;
-    if (!apiKey) {
-      return res.status(500).json({
-        ok: false,
-        error: "OPENAI_API_KEY_missing"
-      });
+    const apiKey = req.headers["x-api-key"];
+    if (!apiKey || apiKey !== OPENAI_KEY) {
+      return res.json(error("openai_401"));
     }
 
-    // 讀取 GAS 傳來的 audio bytes
-    const userId = req.headers["x-user-id"] || "unknown-user";
+    const buf = req.file?.buffer;
+    if (!buf) return res.json(error("no_audio"));
 
-    // Next / Vercel Node runtime：音訊在 req.body（Buffer）
-    const audioBuffer = req.body;
-    if (!audioBuffer || !audioBuffer.length) {
-      return res.status(400).json({
-        ok: false,
-        error: "no_audio_data"
-      });
-    }
-
-    // 建立 multipart/form-data
     const form = new FormData();
-    form.append("file", new Blob([audioBuffer], { type: "audio/m4a" }), "audio.m4a");
-    // 建議仍使用 whisper-1：最穩定的語音辨識模型
+    form.append("file", new Blob([buf]), "audio.m4a");
     form.append("model", "whisper-1");
-    form.append("response_format", "text");
 
-    const openaiRes = await fetch("https://api.openai.com/v1/audio/transcriptions", {
+    const r = await fetch("https://api.openai.com/v1/audio/transcriptions", {
       method: "POST",
       headers: {
-        Authorization: `Bearer ${apiKey}`
+        "Authorization": `Bearer ${OPENAI_KEY}`
       },
       body: form
     });
 
-    if (!openaiRes.ok) {
-      const errTxt = await openaiRes.text();
-      console.error("OpenAI STT error:", openaiRes.status, errTxt);
-      return res.status(500).json({
-        ok: false,
-        sid: userId,
-        error: "openai_" + openaiRes.status
-      });
-    }
+    if (r.status === 401) return res.json(error("openai_401"));
 
-    const text = await openaiRes.text();
+    const j = await r.json();
+    const txt = j.text || j.result || "";
 
-    return res.status(200).json({
+    return res.json({
       ok: true,
-      sid: userId,
-      text: text
+      text: (txt || "").trim()
     });
-  } catch (err) {
-    console.error("voice-proxy fatal:", err);
-    return res.status(500).json({
-      ok: false,
-      error: err.message || "unknown_error"
-    });
+
+  } catch (e) {
+    console.error(e);
+    return res.json(error("proxy_error"));
   }
-};
+});
+
+app.listen(3100, () => {
+  console.log("Whisper Proxy v12.0.8 running on port 3100");
+});
